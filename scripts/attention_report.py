@@ -147,41 +147,23 @@ def _ranked_groups(
     items: list[dict[str, Any]],
     label_field: str,
     top_n: int,
+    identity_field: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    groups: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"estimated_watched_seconds": 0, "video_count": 0}
-    )
-    for item in items:
-        label = item[label_field] or "未知"
-        groups[label]["estimated_watched_seconds"] += item["estimated_watched_seconds"]
-        groups[label]["video_count"] += 1
-
-    ranked = [
-        {"name": name, **values}
-        for name, values in groups.items()
-    ]
-    ranked.sort(
-        key=lambda item: (item["estimated_watched_seconds"], item["video_count"]),
-        reverse=True,
-    )
-    return ranked[:top_n]
-
-
-def _ranked_authors(items: list[dict[str, Any]], top_n: int) -> list[dict[str, Any]]:
     groups: dict[str, dict[str, Any]] = {}
     for item in items:
-        author_mid = item["author_mid"]
-        name = item["author"] or "未知"
-        identity = f"mid:{author_mid}" if author_mid else f"name:{name}"
+        label = item[label_field] or "未知"
+        identity = item.get(identity_field) if identity_field else None
+        group_key = f"{identity_field}:{identity}" if identity else f"name:{label}"
         group = groups.setdefault(
-            identity,
+            group_key,
             {
-                "name": name,
-                "author_mid": author_mid or None,
+                "name": label,
                 "estimated_watched_seconds": 0,
                 "video_count": 0,
             },
         )
+        if identity_field:
+            group[identity_field] = identity or None
         group["estimated_watched_seconds"] += item["estimated_watched_seconds"]
         group["video_count"] += 1
 
@@ -381,7 +363,12 @@ def build_daily_attention_report(
         },
         "type_counts": dict(sorted(type_counts.items())),
         "top_videos": videos[:top_n],
-        "top_authors": _ranked_authors(videos, top_n),
+        "top_authors": _ranked_groups(
+            videos,
+            "author",
+            top_n,
+            identity_field="author_mid",
+        ),
         "top_categories": _ranked_groups(videos, "category", top_n),
         "devices": devices,
     }

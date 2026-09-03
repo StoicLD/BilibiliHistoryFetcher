@@ -162,6 +162,8 @@ class AttentionReportRouteTests(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["data"], report)
 
+
+class AttentionReportDeliveryTests(unittest.TestCase):
     def test_delivery_accepts_successful_email(self):
         report = {"subject": "日报", "text": "正文"}
         with patch.object(
