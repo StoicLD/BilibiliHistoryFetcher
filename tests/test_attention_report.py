@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import routers.attention_report as route_mod
+import scripts.attention_report_delivery as delivery_mod
 from scripts.attention_report import AttentionReportError, build_daily_attention_report
 
 
@@ -116,6 +117,19 @@ class AttentionReportTests(unittest.TestCase):
         self.assertEqual(report["overview"]["distinct_video_count"], 2)
         self.assertEqual(report["overview"]["estimated_watched_seconds"], 30)
 
+    def test_groups_authors_by_mid_instead_of_display_name(self):
+        self.add_row(bvid="BV-A", cid=1, author_name="同名UP", author_mid=100, progress=10)
+        self.add_row(bvid="BV-B", cid=2, author_name="同名UP", author_mid=200, progress=20)
+        self.add_row(bvid="BV-C", cid=3, author_name="新名称", author_mid=100, progress=30)
+
+        report = self.build()
+
+        self.assertEqual(len(report["top_authors"]), 2)
+        authors = {author["author_mid"]: author for author in report["top_authors"]}
+        self.assertEqual(authors[100]["estimated_watched_seconds"], 40)
+        self.assertEqual(authors[100]["video_count"], 2)
+        self.assertEqual(authors[200]["estimated_watched_seconds"], 20)
+
     def test_uses_local_day_boundaries(self):
         before = int(datetime(2026, 9, 2, 23, 59, 59, tzinfo=self.timezone).timestamp())
         start = int(datetime(2026, 9, 3, 0, 0, 0, tzinfo=self.timezone).timestamp())
@@ -139,23 +153,46 @@ class AttentionReportRouteTests(unittest.TestCase):
         report = {"subject": "日报", "text": "正文"}
         request = route_mod.AttentionReportRequest()
         with patch.object(route_mod, "_build_report", return_value=report), patch.object(
-            route_mod, "send_email", AsyncMock(return_value={"status": "error"})
+            route_mod,
+            "deliver_attention_report",
+            AsyncMock(return_value={"status": "error", "data": report}),
         ):
             result = asyncio.run(route_mod.send_daily_attention_report(request))
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["data"], report)
 
-    def test_send_route_accepts_successful_email(self):
+    def test_delivery_accepts_successful_email(self):
         report = {"subject": "日报", "text": "正文"}
-        request = route_mod.AttentionReportRequest()
-        with patch.object(route_mod, "_build_report", return_value=report), patch.object(
-            route_mod, "send_email", AsyncMock(return_value={"status": "success"})
+        with patch.object(
+            delivery_mod, "send_email", AsyncMock(return_value={"status": "success"})
         ) as send_email_mock:
-            result = asyncio.run(route_mod.send_daily_attention_report(request))
+            result = asyncio.run(
+                delivery_mod.deliver_attention_report(
+                    report,
+                    send_email_report=True,
+                    send_apprise_report=False,
+                )
+            )
 
         self.assertEqual(result["status"], "success")
         send_email_mock.assert_awaited_once_with("日报", "正文")
+
+    def test_delivery_propagates_provider_failure(self):
+        report = {"subject": "日报", "text": "正文"}
+        with patch.object(
+            delivery_mod, "send_email", AsyncMock(return_value={"status": "error"})
+        ):
+            result = asyncio.run(
+                delivery_mod.deliver_attention_report(
+                    report,
+                    send_email_report=True,
+                    send_apprise_report=False,
+                )
+            )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["data"], report)
 
 
 if __name__ == "__main__":

@@ -73,7 +73,7 @@ def _require_history_table(connection: sqlite3.Connection, year: int) -> str:
         raise AttentionReportError(f"未找到 {year} 年的历史记录表")
 
     required_columns = {
-        "title", "part", "bvid", "page", "cid", "epid", "oid", "kid",
+        "title", "part", "bvid", "page", "cid", "epid", "oid",
         "business", "dt", "author_name", "author_mid", "view_at", "progress",
         "duration", "is_finish", "tag_name", "main_category", "badge", "remark",
     }
@@ -114,14 +114,7 @@ def _canonical_key(row: sqlite3.Row) -> str:
         identifier = _to_int(row["epid"]) or _to_int(row["cid"]) or _to_int(row["oid"])
         return f"pgc:{identifier or str(row['title'] or '').strip()}"
 
-    identifier = (
-        _to_int(row["kid"])
-        or _to_int(row["oid"])
-        or _to_int(row["cid"])
-        or bvid
-        or str(row["title"] or "").strip()
-    )
-    return f"{business}:{identifier}"
+    raise AttentionReportError(f"不支持的视频业务类型: {business}")
 
 
 def _category(row: sqlite3.Row) -> str:
@@ -167,6 +160,32 @@ def _ranked_groups(
         {"name": name, **values}
         for name, values in groups.items()
     ]
+    ranked.sort(
+        key=lambda item: (item["estimated_watched_seconds"], item["video_count"]),
+        reverse=True,
+    )
+    return ranked[:top_n]
+
+
+def _ranked_authors(items: list[dict[str, Any]], top_n: int) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for item in items:
+        author_mid = item["author_mid"]
+        name = item["author"] or "未知"
+        identity = f"mid:{author_mid}" if author_mid else f"name:{name}"
+        group = groups.setdefault(
+            identity,
+            {
+                "name": name,
+                "author_mid": author_mid or None,
+                "estimated_watched_seconds": 0,
+                "video_count": 0,
+            },
+        )
+        group["estimated_watched_seconds"] += item["estimated_watched_seconds"]
+        group["video_count"] += 1
+
+    ranked = list(groups.values())
     ranked.sort(
         key=lambda item: (item["estimated_watched_seconds"], item["video_count"]),
         reverse=True,
@@ -261,7 +280,7 @@ def build_daily_attention_report(
         rows = connection.execute(
             f"""
             SELECT
-                title, part, bvid, page, cid, epid, oid, kid, business, dt,
+                title, part, bvid, page, cid, epid, oid, business, dt,
                 author_name, author_mid, view_at, progress, duration, is_finish,
                 tag_name, main_category
             FROM {table_name}
@@ -285,11 +304,11 @@ def build_daily_attention_report(
     for row in rows:
         business = str(row["business"] or "other").strip().lower() or "other"
         type_counts[business] += 1
-        key = _canonical_key(row)
 
         if business not in VIDEO_BUSINESSES:
             continue
 
+        key = _canonical_key(row)
         device = DEVICE_LABELS.get(_to_int(row["dt"]), f"未知({_to_int(row['dt'])})")
         device_events[device] += 1
         device_videos[device].add(key)
@@ -362,7 +381,7 @@ def build_daily_attention_report(
         },
         "type_counts": dict(sorted(type_counts.items())),
         "top_videos": videos[:top_n],
-        "top_authors": _ranked_groups(videos, "author", top_n),
+        "top_authors": _ranked_authors(videos, top_n),
         "top_categories": _ranked_groups(videos, "category", top_n),
         "devices": devices,
     }
