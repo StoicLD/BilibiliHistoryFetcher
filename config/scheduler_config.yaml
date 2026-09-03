@@ -44,7 +44,7 @@ tasks:
     params: {}
     requires: []
     schedule:
-      time: 00:00
+      time: 22:45
       type: daily
 
   # 2. 依赖 fetch_history
@@ -79,13 +79,15 @@ tasks:
 
   # 5. 依赖 generate_heatmap
   send_daily_report:
-    endpoint: /log/send-email
+    endpoint: /attention/daily-report/send
     method: POST
-    name: 发送每日报告
+    name: 发送B站注意力日报
     params:
-      content: null
-      mode: simple
-      subject: B站历史记录日报 - {current_time}
+      date: null
+      timezone: Asia/Singapore
+      top_n: 5
+      send_email_report: true
+      send_apprise_report: false
     requires:
     - generate_heatmap
     schedule:

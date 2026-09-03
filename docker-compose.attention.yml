@@ -1,0 +1,34 @@
+name: bili-attention
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cpu
+    image: bili-attention-backend:local
+    container_name: bili-attention-backend
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config
+      - ./output:/app/output
+    ports:
+      - "8900:8899"
+    environment:
+      - TZ=Asia/Singapore
+      - DOCKER_ENV=true
+
+  frontend:
+    image: ghcr.io/lifearchiveproject/bili-history-frontend:latest
+    container_name: bili-attention-frontend
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+    environment:
+      - TZ=Asia/Singapore
+
+networks:
+  default:
+    name: bili-attention-network
+    driver: bridge

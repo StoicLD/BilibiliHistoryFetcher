@@ -515,7 +515,9 @@ class SchedulerManager:
                                 sub_success = await self._execute_single_task(sub_task_id, is_sub_task=True)
                                 if not sub_success:
                                     print(f"子任务 {sub_task_id} 执行失败")
-                                    # 记录子任务失败但继续执行其他子任务
+                                    if getattr(self, 'stop_on_failure', True):
+                                        print("已启用 stop_on_failure，终止后续子任务")
+                                        return False
                                     continue
                             else:
                                 print(f"子任务 {sub_task_id} 已禁用，跳过执行")
