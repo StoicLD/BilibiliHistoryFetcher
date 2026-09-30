@@ -95,6 +95,8 @@ python scripts/attention_reader.py --output-dir output/attention
 
 ## 云端迁移
 
+可选的独立云端邮件适配层见 [Cloud daily-report delivery adapter](CLOUD_DELIVERY.md)，包括通用配置、用户自行输入凭据、发送状态账本与离线测试。调度、邮件发送及持久化存储需由外部集成提供。
+
 复用同一镜像与命令，由云端定时任务启动容器。挂载持久化数据目录、只读 JSON 和只读凭据；可通过 `ATTENTION_HOST_OUTPUT`、`ATTENTION_CONFIG_FILE`、`ATTENTION_CREDENTIALS_FILE` 为 Compose 指定宿主机路径。容器内固定写 `/data`。
 
 首版假定 Hermes 与报告在同一宿主机。迁移后需要让 Hermes 只读访问同一份已发布报告；未实现 Dots 专属部署或跨主机报告同步。

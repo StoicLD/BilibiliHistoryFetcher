@@ -520,3 +520,14 @@ Temporary Items
 /.idea/.gitignore
 /.claude/
 .ace-tool/
+
+# Cloud delivery runtime and private per-deployment configuration
+/data/
+/state/
+/logs/
+/.venv-cloud/
+/.venv-test/
+/.uv-cache/
+/.pip-cache/
+/config/attention.deployment.json
+/config/cloud-delivery.env
