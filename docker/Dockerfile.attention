@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+COPY docker/requirements.attention.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY config/sql_statements_sqlite.py config/categories.json /app/config/
+COPY scripts/attention_*.py scripts/history_sync.py /app/scripts/
+ENTRYPOINT ["python", "-m", "scripts.attention_job"]
+CMD ["--config", "/app/config/attention.json", "--credentials", "/run/secrets/bilibili.env"]

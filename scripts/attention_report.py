@@ -106,7 +106,8 @@ def _canonical_key(row: sqlite3.Row) -> str:
     business = str(row["business"] or "other").strip().lower()
     bvid = str(row["bvid"] or "").strip()
 
-    if business == "archive" and bvid:
+    if business == "archive":
+        bvid = bvid or str(_to_int(row['oid']) or row['title'] or 'unknown')
         cid = _to_int(row["cid"])
         part_key = f"cid:{cid}" if cid else f"page:{max(1, _to_int(row['page']))}"
         return f"archive:{bvid}:{part_key}"
@@ -121,7 +122,7 @@ def _category(row: sqlite3.Row) -> str:
     main_category = str(row["main_category"] or "").strip()
     if main_category and main_category != "待定":
         return main_category
-    return str(row["tag_name"] or row["business"] or "其他").strip() or "其他"
+    return str(row["tag_name"] or "未分类").strip() or "未分类"
 
 
 def _display_title(row: sqlite3.Row) -> str:
@@ -241,6 +242,7 @@ def build_daily_attention_report(
     target_date: Optional[date | str] = None,
     timezone_name: Optional[str] = None,
     top_n: int = 5,
+    topic_rules: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Return structured daily metrics plus a ready-to-send text report.
 
@@ -308,6 +310,11 @@ def build_daily_attention_report(
             "duration_seconds": duration_seconds,
             "event_count": 1,
         }
+        candidate['topic'] = next(
+            (rule['name'] for rule in (topic_rules or [])
+             if any(word.casefold() in candidate['title'].casefold() for word in rule['title_keywords'])),
+            candidate['category'],
+        )
         existing = video_items.get(key)
         if existing is None:
             video_items[key] = candidate
@@ -357,6 +364,8 @@ def build_daily_attention_report(
         },
         "overview": {
             "history_record_count": len(rows),
+            "video_record_count": sum(type_counts[k] for k in VIDEO_BUSINESSES),
+            "non_video_record_count": sum(v for k, v in type_counts.items() if k not in VIDEO_BUSINESSES),
             "distinct_video_count": len(videos),
             "estimated_watched_seconds": estimated_watched_seconds,
             "total_video_duration_seconds": total_video_duration_seconds,
@@ -371,10 +380,49 @@ def build_daily_attention_report(
         ),
         "top_categories": _ranked_groups(videos, "category", top_n),
         "devices": devices,
+        "categories": _ranked_groups(videos, 'category', len(videos)),
+        "topics": _ranked_groups(videos, 'topic', len(videos)),
     }
+    for group in report['categories'] + report['topics']:
+        group['time_percent'] = round(group['estimated_watched_seconds'] * 100 / estimated_watched_seconds, 2) if estimated_watched_seconds else 0
     report["subject"] = (
         f"B站注意力日报：{_format_duration(estimated_watched_seconds)} / "
         f"{len(videos)}个视频"
     )
     report["text"] = _render_report(report)
+    return report
+
+
+def prepare_export(report, generated_at):
+    """Attach deterministic local and chat renderings to a completed report."""
+    report.update(schema_version=1, generated_at=generated_at, sync_status='success')
+    overview = report['overview']
+    summary = (f"估算观看时长：{_format_duration(overview['estimated_watched_seconds'])}\n"
+               f"视频/分P：{overview['distinct_video_count']} 个；视频观看记录：{overview['video_record_count']} 条")
+    brief = [f"B 站日报 · {report['date']}", f"生成时间：{generated_at}", summary]
+    if not overview['history_record_count']:
+        brief.append('历史接口在该日期未返回观看记录。')
+    if overview['non_video_record_count']:
+        brief.append(f"另有非视频记录：{overview['non_video_record_count']} 条（不计入视频时长）")
+    if report['topics']:
+        brief.append('主要主题：')
+        brief.extend(
+            f"{x['name']} {x['video_count']}个 / {_format_duration(x['estimated_watched_seconds'])} / {x['time_percent']}%"
+            for x in report['topics'][:3])
+    if report['top_videos']:
+        brief.append('主要视频：' + '；'.join(x['title'][:100] for x in report['top_videos'][:2]))
+    if report['top_authors']:
+        brief.append('主要 UP 主：' + '、'.join(x['name'][:50] for x in report['top_authors'][:3]))
+    brief.append('时长按最终播放进度估算，不代表真实屏幕使用时间。')
+    report['brief'] = '\n'.join(brief)
+    markdown = [f"# B 站日报 · {report['date']}", '', f"生成时间：{generated_at} · 时区：{report['timezone']}", '', summary, '']
+    for title, groups in [('内容主题', report['topics']), ('B 站分区', report['categories'])]:
+        markdown.extend([f'## {title}', '', '| 分类 | 视频数 | 估算时长 | 时长占比 |', '| --- | ---: | ---: | ---: |'])
+        for group in groups:
+            name = group['name'].replace('|', '\\|').replace('\n', ' ')
+            markdown.append(f"| {name} | {group['video_count']} | {_format_duration(group['estimated_watched_seconds'])} | {group['time_percent']}% |")
+        markdown.append('')
+    markdown.extend(['## 详细统计', '', '```text', report['text'].replace('```', "'''"), '```', '',
+                     '跨天续播、倍速和重复观看无法从历史数据准确还原；此报告只描述可获取的历史记录。', ''])
+    report['markdown'] = '\n'.join(markdown)
     return report

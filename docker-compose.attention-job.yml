@@ -1,0 +1,23 @@
+name: bili-attention-job
+services:
+  job:
+    image: bili-attention-job:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.attention
+    restart: "no"
+    init: true
+    environment:
+      ATTENTION_OUTPUT_DIR: /data
+    volumes:
+      - type: bind
+        source: ${ATTENTION_HOST_OUTPUT:-./output/attention}
+        target: /data
+      - type: bind
+        source: ${ATTENTION_CONFIG_FILE:-./config/attention.json}
+        target: /app/config/attention.json
+        read_only: true
+      - type: bind
+        source: ${ATTENTION_CREDENTIALS_FILE:-./secrets/bilibili.env}
+        target: /run/secrets/bilibili.env
+        read_only: true

@@ -145,163 +145,14 @@ def get_last_import_time():
         return 0
 
 def import_data_from_json(conn, table_name, file_path, last_import_time=0, batch_size=1000, sync_deleted=False):
-    """从JSON文件导入数据"""
-    try:
-        # 尝试不同的编码方式读取
-        data = None
-        for encoding in ['utf-8', 'gbk', 'utf-8-sig']:
-            try:
-                with open(file_path, 'r', encoding=encoding) as f:
-                    data = json.load(f)
-                break
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                continue
+    # Revisit existing events as their remote playback progress can change.
+    from scripts.history_sync import import_records
+    with open(file_path, 'r', encoding='utf-8-sig') as stream:
+        records = json.load(stream)
+    with conn:
+        result = import_records(conn, records, timezone=None, sync_deleted=sync_deleted, id_factory=id_generator.get_id)
+    return result['inserted']
 
-        if data is None:
-            logger.error(f"无法读取文件 {file_path}：所有编码尝试都失败")
-            return 0
-
-        total_inserted = 0
-        # 按年份分组数据
-        data_by_year = {}
-        has_new_records = False
-
-        # 获取现有记录的bvid和view_at组合
-        cursor = conn.cursor()
-        existing_records = set()
-        for year in range(datetime.now().year - 1, datetime.now().year + 1):
-            table = f"bilibili_history_{year}"
-            if table_exists(conn, table):
-                cursor.execute(f"SELECT bvid, view_at FROM {table}")
-                existing_records.update((bvid, view_at) for bvid, view_at in cursor.fetchall())
-
-        # 获取已删除的记录
-        deleted_records = set()
-        if not sync_deleted:
-            # 确保删除记录表存在
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS deleted_history (
-                    id INTEGER PRIMARY KEY,
-                    bvid TEXT NOT NULL,
-                    view_at INTEGER NOT NULL,
-                    delete_time INTEGER NOT NULL,
-                    UNIQUE(bvid, view_at)
-                )
-            """)
-
-            # 获取已删除的记录
-            cursor.execute("SELECT bvid, view_at FROM deleted_history")
-            deleted_records = set((bvid, view_at) for bvid, view_at in cursor.fetchall())
-            logger.info(f"已加载 {len(deleted_records)} 条已删除的记录")
-
-        # 遍历所有记录，检查每条记录的时间
-        for item in data:
-            # 获取观看时间
-            view_at = item.get('view_at', 0)
-            if view_at == 0:
-                continue
-
-            # 如果有上次导入时间，则只处理更新的记录
-            if last_import_time > 0 and view_at <= last_import_time:
-                logger.debug(f"跳过旧记录: {item.get('title')} - {datetime.fromtimestamp(view_at)}")
-                continue
-
-            # 检查bvid和view_at组合是否已存在
-            history = item.get('history', {})
-            bvid = history.get('bvid', '')
-            if (bvid, view_at) in existing_records:
-                logger.debug(f"跳过重复记录: {item.get('title')} - {datetime.fromtimestamp(view_at)}")
-                continue
-
-            # 如果不同步已删除的记录，则跳过已删除的记录
-            if not sync_deleted and (bvid, view_at) in deleted_records:
-                logger.debug(f"跳过已删除的记录: {item.get('title')} - {datetime.fromtimestamp(view_at)}")
-                continue
-
-            has_new_records = True
-            year = datetime.fromtimestamp(view_at).year
-            if year not in data_by_year:
-                data_by_year[year] = []
-
-            main_category = None
-            business = history.get('business', '')
-            tag_name = item.get('tag_name', '').strip()
-
-            if business == 'archive':
-                if tag_name in unique_tag_to_main:
-                    main_category = unique_tag_to_main[tag_name]
-                elif tag_name in duplicated_tags:
-                    main_category = '待定'
-                else:
-                    main_category = '待定'
-
-            # 从正确的位置获取duration和progress
-            duration = item.get('duration', 0)  # 从item对象获取视频总时长
-            progress = item.get('progress', 0)  # 从item对象获取观看进度
-
-            record = (
-                id_generator.get_id(),
-                item.get('title', ''),
-                item.get('long_title', ''),
-                item.get('cover', ''),
-                json.dumps(item.get('covers', [])),
-                item.get('uri', ''),
-                history.get('oid', 0),
-                history.get('epid', 0),
-                bvid,
-                history.get('page', 1),
-                history.get('cid', 0),
-                history.get('part', ''),
-                business,
-                history.get('dt', 0),
-                history.get('videos', 0),
-                item.get('author_name', ''),
-                item.get('author_face', ''),
-                item.get('author_mid', 0),
-                view_at,
-                progress,  # 使用从item对象获取的观看进度
-                item.get('badge', ''),
-                item.get('show_title', ''),
-                duration,  # 使用从item对象获取的视频总时长
-                item.get('current', ''),
-                item.get('total', 0),
-                item.get('new_desc', ''),
-                item.get('is_finish', 0),
-                item.get('is_fav', 0),
-                history.get('kid', 0),
-                tag_name,
-                item.get('live_status', 0),
-                main_category,
-                '',  # 默认的空备注
-                0   # 默认的备注时间为0
-            )
-
-            data_by_year[year].append(record)
-            existing_records.add((bvid, view_at))  # 添加到已存在记录集合中
-
-            # 当达到批量大小时，执行插入
-            if len(data_by_year[year]) >= batch_size:
-                year_table = f"{table_name}_{year}"
-                if not table_exists(conn, year_table):
-                    create_table(conn, year_table)
-                inserted = batch_insert_data(conn, year_table, data_by_year[year])
-                total_inserted += inserted
-                data_by_year[year] = []
-
-        # 处理剩余的数据
-        for year, records in data_by_year.items():
-            if records:
-                year_table = f"{table_name}_{year}"
-                if not table_exists(conn, year_table):
-                    create_table(conn, year_table)
-                inserted = batch_insert_data(conn, year_table, records)
-                total_inserted += inserted
-
-        return total_inserted
-
-    except sqlite3.Error as e:
-        logger.error(f"导入数据时发生错误: {e}")
-        return 0
 
 def save_last_import_record(file_path, timestamp):
     """保存最后导入记录"""
@@ -401,10 +252,6 @@ def import_all_history_files(sync_deleted=False):
                             latest_timestamp = newest_view_at
                             latest_file = day_path
 
-                        # 只有当存在上次导入记录时才进行时间判断
-                        if last_import_time > 0 and newest_view_at <= last_import_time:
-                            logger.info(f"跳过文件 {day_path} 及后续文件: 所有记录都早于上次导入时间")
-                            break
             except Exception as e:
                 logger.error(f"读取文件 {day_path} 时出错: {e}")
                 continue

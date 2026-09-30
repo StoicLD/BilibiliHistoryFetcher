@@ -163,14 +163,6 @@ def load_config() -> Dict[str, Any]:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
 
-        # 验证邮件配置
-        email_config = config.get('email', {})
-        required_fields = ['smtp_server', 'smtp_port', 'sender', 'password', 'receiver']
-        missing_fields = [field for field in required_fields if not email_config.get(field)]
-
-        if missing_fields:
-            raise ValueError(f"邮件配置缺少必要字段: {', '.join(missing_fields)}")
-
         return config
     except Exception as e:
         logger.error(f"加载配置文件失败: {str(e)}")

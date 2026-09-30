@@ -1,0 +1,10 @@
+**
+!docker/
+!docker/Dockerfile.attention
+!docker/requirements.attention.txt
+!scripts/
+!scripts/attention_*.py
+!scripts/history_sync.py
+!config/
+!config/categories.json
+!config/sql_statements_sqlite.py

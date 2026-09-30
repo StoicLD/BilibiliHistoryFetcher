@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "timezone": "Asia/Singapore",
+  "schedule": {"enabled": true, "time": "09:00"},
+  "sync": {"refresh_days": 3, "catch_up_days": 7, "request_timeout_seconds": 30, "max_attempts": 3},
+  "job_timeout_minutes": 20,
+  "output_dir": "./output/attention",
+  "report": {
+    "top_n": 5,
+    "topic_rules": [{"name": "AI", "title_keywords": ["人工智能", "大模型", "机器学习"]}]
+  }
+}
